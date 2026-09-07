@@ -27,8 +27,7 @@
 *.avi
 /Assets/AssetStoreTools/
 
-# Public portfolio is a source-only client, not a redistributable asset bundle.
-# The complete licensed Unity project stays on this PC.
+# External assets are excluded from this source-only repository.
 /Assets/*
 !/Assets/MYFolder/
 !/Assets/MYFolder.meta
@@ -43,8 +42,6 @@
 !/Assets/MYFolder/Editor.meta
 !/Assets/MYFolder/ExportedFieldData/
 !/Assets/MYFolder/ExportedFieldData.meta
-!/Assets/MYFolder/Docs/
-!/Assets/MYFolder/Docs.meta
 !/Assets/MYFolder/Scenes/
 !/Assets/MYFolder/Scenes.meta
 /Assets/MYFolder/Scenes/*
@@ -54,3 +51,26 @@
 !/Assets/MYFolder/Scenes/TownScene.unity.meta
 !/Assets/MYFolder/Scenes/BeginnerZoneScene.unity
 !/Assets/MYFolder/Scenes/BeginnerZoneScene.unity.meta
+
+# Keep reusable editor tools; exclude local conversion and capture scripts.
+/Assets/MYFolder/Editor/*
+!/Assets/MYFolder/Editor/ChatScrollbarSetup.cs
+!/Assets/MYFolder/Editor/ChatScrollbarSetup.cs.meta
+!/Assets/MYFolder/Editor/LoginSceneUIBuilder.cs
+!/Assets/MYFolder/Editor/LoginSceneUIBuilder.cs.meta
+!/Assets/MYFolder/Editor/ServerFileDataSetup.cs
+!/Assets/MYFolder/Editor/ServerFileDataSetup.cs.meta
+!/Assets/MYFolder/Editor/UnifiedUISetup.cs
+!/Assets/MYFolder/Editor/UnifiedUISetup.cs.meta
+!/Assets/MYFolder/Editor/ZoneGameplayUISetup.cs
+!/Assets/MYFolder/Editor/ZoneGameplayUISetup.cs.meta
+!/Assets/MYFolder/Editor/ZoneMapBuilder.cs
+!/Assets/MYFolder/Editor/ZoneMapBuilder.cs.meta
+/CURRENT_STATE.md
+/Assets/MYFolder/ExportedFieldData/MonsterSpawnData.txt
+/Assets/MYFolder/ExportedFieldData/MonsterSpawnData.txt.meta
+/Assets/MYFolder/Script/KeyMovement.cs*
+/Assets/MYFolder/Script/NavMovement.cs*
+/Assets/MYFolder/Script/PlayerController.cs*
+/Assets/MYFolder/Script/PlayerRemote.cs*
+/Assets/MYFolder/Script/RemoteMovement.cs*

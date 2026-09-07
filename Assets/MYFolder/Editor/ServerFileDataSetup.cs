@@ -12,44 +12,6 @@ public static class ServerFileDataSetup
 	const string Root = "Assets/MYFolder/";
 	const string DataRoot = Root + "ExportedFieldData/";
 
-	// 기존 DB에서 확인한 값을 처음 한 번만 씬에 옮김
-	public static void Migrate()
-	{
-		string backup = "Build/Validation/Backups/FileData_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
-		Directory.CreateDirectory(backup);
-		string[] names = { "TownScene", "BeginnerZoneScene" };
-		for (int i = 0; i < names.Length; ++i)
-		{
-			string path = Root + "Scenes/" + names[i] + ".unity";
-			File.Copy(path, backup + "/" + names[i] + ".unity");
-			Scene scene = EditorSceneManager.OpenScene(path);
-			ZoneSceneInfo info = UnityEngine.Object.FindObjectOfType<ZoneSceneInfo>(true);
-			SerializedObject data = new SerializedObject(info);
-			Vector3 entry = new Vector3(50, 0, 20);
-			if (i == 1) entry = new Vector3(22, 0, 23);
-			data.FindProperty("m_enterPosition").vector3Value = entry;
-			data.FindProperty("m_isStartZone").boolValue = i == 0;
-			data.FindProperty("m_isActive").boolValue = true;
-			data.ApplyModifiedPropertiesWithoutUndo();
-			ZonePortal[] portals = UnityEngine.Object.FindObjectsOfType<ZonePortal>(true);
-			for (int j = 0; j < portals.Length; ++j)
-			{
-				if (!portals[j].IsActive()) continue;
-				SerializedObject portal = new SerializedObject(portals[j]);
-				ulong target = 2;
-				Vector3 destination = new Vector3(22, 0, 23);
-				if (i == 1) { target = 1; destination = new Vector3(27, 0, 80); }
-				portal.FindProperty("m_targetZoneId").ulongValue = target;
-				portal.FindProperty("m_targetEnterPosition").vector3Value = destination;
-				portal.ApplyModifiedPropertiesWithoutUndo();
-			}
-			EditorSceneManager.MarkSceneDirty(scene);
-			EditorSceneManager.SaveScene(scene);
-		}
-		Export();
-		TownPlacementVerification.Run();
-	}
-
 	[MenuItem("MYFolder/FieldData/서버용 존 및 스폰 파일 내보내기")]
 	public static void Export()
 	{
