@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections;
-using System.Text;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -18,28 +17,39 @@ public class ZoneSceneNetwork : MonoBehaviour
 	NetClient m_client;
 	AccountInfo m_accountInfo;
 	LocalPlayerObject m_localPlayer;
-	readonly Dictionary<string, GameObject> m_objectMap = new Dictionary<string, GameObject>();
+	readonly ZoneObjectManager m_objectManager = new ZoneObjectManager();
 	float m_nextMoveSend;
 	Vector3 m_lastDestination;
 	bool m_hasMoveDestination;
 	ulong m_localObjectNum;
-	ZoneChatUI m_chatUI;
+	ChatHistory m_chatHistory;
 	bool m_waitingZoneChange;
 	bool m_waitingChannelChange;
 	bool m_waitingRespawn;
+	bool m_changingScene;
 	ulong m_channelId;
 	ZoneGameplayUI m_gameplayUI;
 	ZoneChannelUI m_channelUI;
 
 	public bool IsWaiting() { return m_waitingZoneChange || m_waitingChannelChange || m_waitingRespawn || m_localPlayer == null || m_localPlayer.GetState() == ePlayerObjectState.Dead; }
 	public ulong GetChannelId() { return m_channelId; }
+	public bool IsTransitioning() { return m_waitingZoneChange || m_waitingChannelChange || m_waitingRespawn || m_localPlayer == null || m_changingScene; }
+
+	void Awake()
+	{
+		m_objectManager.Initialize(m_localWarriorPrefab, m_localArcherPrefab, m_remoteWarriorPrefab, m_remoteArcherPrefab, m_monsterPrefabList, m_objectRoot);
+	}
 
 	void Start()
 	{
 		Instance = this;
 		m_client = FindObjectOfType<NetClient>();
 		m_accountInfo = FindObjectOfType<AccountInfo>();
-		m_chatUI = FindObjectOfType<ZoneChatUI>(true);
+		if (m_client != null)
+		{
+			m_chatHistory = m_client.GetChatHistory();
+			m_chatHistory.ChatReceived += ShowChatBubble;
+		}
 		m_gameplayUI = FindObjectOfType<ZoneGameplayUI>(true);
 		m_channelUI = FindObjectOfType<ZoneChannelUI>(true);
 		if (m_client == null || m_accountInfo == null)
@@ -62,7 +72,11 @@ public class ZoneSceneNetwork : MonoBehaviour
 		else ReadEnterPacket(m_accountInfo.GetEnterZonePacket());
 	}
 
-	void OnDestroy() { if (Instance == this) Instance = null; }
+	void OnDestroy()
+	{
+		if (m_chatHistory != null) m_chatHistory.ChatReceived -= ShowChatBubble;
+		if (Instance == this) Instance = null;
+	}
 
 	public void SendAttackStart(byte _attackType, MonsterHitbox _target)
 	{
@@ -73,7 +87,9 @@ public class ZoneSceneNetwork : MonoBehaviour
 		stream.Write(ePacketType.C2S_AttackStart);
 		stream.Write(_attackType);
 		stream.Write((byte)1);
-		stream.Write(identity == null ? 0UL : identity.GetObjectNum());
+		ulong targetNum = 0;
+		if (identity != null) targetNum = identity.GetObjectNum();
+		stream.Write(targetNum);
 		WriteVector(stream, m_localPlayer.transform.position);
 		stream.Write(m_localPlayer.transform.eulerAngles.y);
 		m_client.Write(stream);
@@ -110,14 +126,15 @@ public class ZoneSceneNetwork : MonoBehaviour
 
 	public bool SendChat(string _chat)
 	{
+		if (m_client == null) return false;
+		ChatInputState state = m_client.GetChatInputState();
+		return SendChat(state.GetChannel(), state.GetWhisperName(), _chat);
+	}
+
+	public bool SendChat(eChatChannel _channel, string _targetName, string _text)
+	{
 		if (m_client == null || IsWaiting()) return false;
-		byte[] text = Encoding.UTF8.GetBytes(_chat);
-		if (text.Length == 0 || _chat.Length > 15) return false;
-		PacketStream stream = new PacketStream(5 + text.Length);
-		stream.Write(ePacketType.C2S_Chat);
-		stream.Write((byte)text.Length);
-		stream.Write(text);
-		return m_client.Write(stream);
+		return m_client.GetChatNetwork().Send(_channel, _targetName, _text);
 	}
 
 	public LocalPlayerObject GetLocalPlayer() { return m_localPlayer; }
@@ -188,6 +205,7 @@ public class ZoneSceneNetwork : MonoBehaviour
 
 	void Update()
 	{
+		if (m_client == null || m_changingScene) return;
 		if (m_client.TryGetDisconnectMessage(out string message))
 		{
 			m_gameplayUI.ShowMessage("서버와의 연결이 끊겼습니다.\n확인을 누르면 게임을 종료합니다.", true);
@@ -241,65 +259,13 @@ public class ZoneSceneNetwork : MonoBehaviour
 
 	void CreateObject(byte[] _packet, int _offset, bool _local, ulong _experience = 0, ulong _requiredExperience = 0)
 	{
-		byte objectType = _packet[_offset];
 		ulong objectNum = BitConverter.ToUInt64(_packet, _offset + 1);
-		ulong dataIndex = BitConverter.ToUInt64(_packet, _offset + 9);
-		ulong jobClass = BitConverter.ToUInt64(_packet, _offset + 17);
-		ulong level = BitConverter.ToUInt64(_packet, _offset + 25);
-		ulong maxHP = BitConverter.ToUInt64(_packet, _offset + 33);
-		ulong hp = BitConverter.ToUInt64(_packet, _offset + 41);
-		Vector3 position = new Vector3(BitConverter.ToSingle(_packet, _offset + 49), BitConverter.ToSingle(_packet, _offset + 53), BitConverter.ToSingle(_packet, _offset + 57));
-		float rotationY = BitConverter.ToSingle(_packet, _offset + 61);
-		int nameSize = _packet[_offset + 66];
-		if (nameSize > 30) nameSize = 30;
-		string objectName = "";
-		if (nameSize > 0) objectName = Encoding.UTF8.GetString(_packet, _offset + 67, nameSize);
-		GameObject prefab = null;
-		if (objectType == 0)
-		{
-			if (_local) prefab = jobClass == 0 ? m_localWarriorPrefab : m_localArcherPrefab;
-			else prefab = jobClass == 0 ? m_remoteWarriorPrefab : m_remoteArcherPrefab;
-		}
-		else if (dataIndex < (ulong)m_monsterPrefabList.Length) prefab = m_monsterPrefabList[(int)dataIndex];
-		if (prefab == null) return;
-		string objectKey = Key(objectType, objectNum);
-		bool created = !m_objectMap.TryGetValue(objectKey, out GameObject instance) || instance == null;
-		if (created)
-		{
-			instance = Instantiate(prefab, ResolveHeight(position), Quaternion.Euler(0.0f, rotationY, 0.0f), m_objectRoot);
-			MonsterWander wander = instance.GetComponent<MonsterWander>();
-			if (wander != null) wander.enabled = false;
-			MonsterObject serverMonster = instance.GetComponent<MonsterObject>();
-			if (serverMonster != null) serverMonster.InitializeServer();
-			ZoneObjectIdentity identity = instance.GetComponent<ZoneObjectIdentity>();
-			if (identity == null) identity = instance.AddComponent<ZoneObjectIdentity>();
-			identity.Initialize(objectType, objectNum);
-			m_objectMap[objectKey] = instance;
-		}
-		// 이미 보이는 대상은 외형/경로/애니메이션/타겟을 유지하고 정보만 갱신
-		if (objectType == 0)
-		{
-			PlayerInfo playerInfo = instance.GetComponent<PlayerInfo>();
-			if (playerInfo == null) playerInfo = instance.AddComponent<PlayerInfo>();
-			if (!created && !_local)
-			{
-				_experience = playerInfo.GetExperience();
-				_requiredExperience = playerInfo.GetRequiredExperience();
-			}
-			playerInfo.Initialize(objectName, (int)level, (int)maxHP, (int)hp, _experience, _requiredExperience);
-		}
-		else
-		{
-			MonsterCombatStatus monsterStatus = instance.GetComponent<MonsterCombatStatus>();
-			if (monsterStatus != null) monsterStatus.InitializeServerData((eMonsterType)dataIndex, (uint)level, (uint)maxHP, (uint)hp);
-			if (created)
-			{
-				MonsterObject monster = instance.GetComponent<MonsterObject>();
-				if (monster != null && _packet[_offset + 65] == 5) monster.SetState(eMonsterState.Dead);
-			}
-		}
+		bool created = !m_objectManager.TryFind(_packet[_offset], objectNum, out GameObject previous);
+		GameObject instance = m_objectManager.Create(_packet, _offset, _local, _experience, _requiredExperience);
+		if (instance == null) return;
 		if (_local) m_localPlayer = instance.GetComponent<LocalPlayerObject>();
-		if (objectType == 0 && (hp == 0 || _packet[_offset + 65] == 5)) ApplyPlayerDead(objectNum, created);
+		if (_packet[_offset] == 0 && (BitConverter.ToUInt64(_packet, _offset + 41) == 0 || _packet[_offset + 65] == 5))
+			ApplyPlayerDead(objectNum, created);
 	}
 
 	void ReadPacket(byte[] _packet)
@@ -336,15 +302,15 @@ public class ZoneSceneNetwork : MonoBehaviour
 				return;
 			}
 			ulong zoneId = BitConverter.ToUInt64(_packet, 5);
-			Vector3 position = new Vector3(BitConverter.ToSingle(_packet, 13), BitConverter.ToSingle(_packet, 17), BitConverter.ToSingle(_packet, 21));
-			if (type == ePacketType.S2C_Respawn) m_accountInfo.BeginRespawnTransfer(zoneId, position);
-			else m_accountInfo.BeginZoneTransfer(zoneId, position);
+			if (type == ePacketType.S2C_Respawn) m_accountInfo.BeginRespawnTransfer(zoneId);
+			else m_accountInfo.BeginZoneTransfer(zoneId);
 			m_waitingZoneChange = true;
 			string sceneName = "";
 			if (zoneId == 1) sceneName = "TownScene";
 			if (zoneId == 2) sceneName = "BeginnerZoneScene";
 			if (sceneName.Length == 0) { m_waitingZoneChange = false; return; }
-			SceneManager.LoadScene(sceneName);
+			m_changingScene = true;
+			LoadingPanelUI.ChangeScene(sceneName);
 			return;
 		}
 		if (type == ePacketType.S2C_ChangeChannel)
@@ -356,7 +322,8 @@ public class ZoneSceneNetwork : MonoBehaviour
 			ReadEnterPacket(_packet);
 			m_channelUI.ShowResult(true);
 		}
-		if (type == ePacketType.S2C_ChannelList) m_channelUI.ReadList(_packet, m_channelId);
+		if (type == ePacketType.S2C_ChannelList && ChannelInfo.TryReadList(_packet, out ChannelInfo[] channelList))
+			m_channelUI.SetList(channelList, m_channelId);
 		if (type == ePacketType.S2C_FieldObjectLeave && _packet.Length >= 13)
 		{
 			RemoveObject(_packet[4], BitConverter.ToUInt64(_packet, 5));
@@ -370,12 +337,12 @@ public class ZoneSceneNetwork : MonoBehaviour
 		if (type == ePacketType.S2C_Move && _packet.Length >= 40)
 		{
 			ulong objectNum = BitConverter.ToUInt64(_packet, 4);
-			if (m_objectMap.TryGetValue(Key(0, objectNum), out GameObject instance))
+			if (m_objectManager.TryFind(0, objectNum, out GameObject instance))
 			{
 				RemotePlayerObject remote = instance.GetComponent<RemotePlayerObject>();
 				Vector3 position = new Vector3(BitConverter.ToSingle(_packet, 12), 0.0f, BitConverter.ToSingle(_packet, 20));
 				Vector3 destination = new Vector3(BitConverter.ToSingle(_packet, 24), 0.0f, BitConverter.ToSingle(_packet, 32));
-				if (remote != null) remote.ApplyMove(ResolveHeight(position), destination, BitConverter.ToSingle(_packet, 36));
+				if (remote != null) remote.ApplyMove(ZoneObjectManager.ResolveHeight(position), destination, BitConverter.ToSingle(_packet, 36));
 			}
 		}
 		if (type == ePacketType.S2C_AttackStart && _packet.Length >= 37)
@@ -383,13 +350,13 @@ public class ZoneSceneNetwork : MonoBehaviour
 			ulong playerObjectNum = BitConverter.ToUInt64(_packet, 4);
 			// 내가 이미 수행한 입력은 서버 통지로 위치/모션을 되감지 않음
 			if (playerObjectNum == m_localObjectNum) return;
-			if (m_objectMap.TryGetValue(Key(0, playerObjectNum), out GameObject playerGameObject))
+			if (m_objectManager.TryFind(0, playerObjectNum, out GameObject playerGameObject))
 			{
 				RemotePlayerObject remote = playerGameObject.GetComponent<RemotePlayerObject>();
 				if (remote != null)
 				{
 					remote.transform.rotation = Quaternion.Euler(0, BitConverter.ToSingle(_packet, 33), 0);
-					m_objectMap.TryGetValue(Key(1, BitConverter.ToUInt64(_packet, 13)), out GameObject target);
+					m_objectManager.TryFind(1, BitConverter.ToUInt64(_packet, 13), out GameObject target);
 					remote.BeginServerAttack(_packet[12], target);
 				}
 			}
@@ -399,7 +366,7 @@ public class ZoneSceneNetwork : MonoBehaviour
 			ulong damage = BitConverter.ToUInt64(_packet, 22);
 			ulong targetNum = BitConverter.ToUInt64(_packet, 14);
 			ulong playerObjectNum = BitConverter.ToUInt64(_packet, 5);
-			if (m_objectMap.TryGetValue(Key(_packet[13], targetNum), out GameObject target))
+			if (m_objectManager.TryFind(_packet[13], targetNum, out GameObject target))
 			{
 				MonsterCombatStatus status = target.GetComponent<MonsterCombatStatus>();
 				if (status != null) status.ApplyServerHP((uint)BitConverter.ToUInt64(_packet, 30));
@@ -407,7 +374,7 @@ public class ZoneSceneNetwork : MonoBehaviour
 				if (playerObjectNum != m_localObjectNum)
 				{
 					RemotePlayerObject remote = null;
-					if (m_objectMap.TryGetValue(Key(0, playerObjectNum), out GameObject attacker)) remote = attacker.GetComponent<RemotePlayerObject>();
+					if (m_objectManager.TryFind(0, playerObjectNum, out GameObject attacker)) remote = attacker.GetComponent<RemotePlayerObject>();
 					int displayedDamage = (int)Math.Min(damage, (ulong)int.MaxValue);
 					if (remote != null) remote.PlayServerHit(target, displayedDamage);
 					else
@@ -428,7 +395,7 @@ public class ZoneSceneNetwork : MonoBehaviour
 		if (type == ePacketType.S2C_LevelUp && _packet.Length >= 52)
 		{
 			ulong playerObjectNum = BitConverter.ToUInt64(_packet, 4);
-			if (m_objectMap.TryGetValue(Key(0, playerObjectNum), out GameObject playerGameObject))
+			if (m_objectManager.TryFind(0, playerObjectNum, out GameObject playerGameObject))
 			{
 				PlayerInfo playerInfo = playerGameObject.GetComponent<PlayerInfo>();
 				if (playerInfo != null)
@@ -439,14 +406,13 @@ public class ZoneSceneNetwork : MonoBehaviour
 					int maxHP = (int)BitConverter.ToUInt64(_packet, 36);
 					int hp = (int)BitConverter.ToUInt64(_packet, 44);
 					playerInfo.ApplyLevelUp(level, experience, requiredExperience, maxHP, hp);
-					if (playerObjectNum == m_localObjectNum) m_accountInfo.SetProgress((ulong)level, experience);
 				}
 			}
 		}
 		if (type == ePacketType.S2C_MonsterState && _packet.Length >= 57)
 		{
 			ulong monsterObjectNum = BitConverter.ToUInt64(_packet, 4);
-			if (m_objectMap.TryGetValue(Key(1, monsterObjectNum), out GameObject monsterObject))
+			if (m_objectManager.TryFind(1, monsterObjectNum, out GameObject monsterObject))
 			{
 				MonsterCombatStatus status = monsterObject.GetComponent<MonsterCombatStatus>();
 				if (status != null) status.ApplyServerHP((uint)BitConverter.ToUInt64(_packet, 49));
@@ -462,12 +428,12 @@ public class ZoneSceneNetwork : MonoBehaviour
 		{
 			ulong playerNum = BitConverter.ToUInt64(_packet, 4);
 			ulong monsterNum = BitConverter.ToUInt64(_packet, 12);
-			if (!m_objectMap.TryGetValue(Key(0, playerNum), out GameObject player)) return;
+			if (!m_objectManager.TryFind(0, playerNum, out GameObject player)) return;
 			PlayerInfo info = player.GetComponent<PlayerInfo>();
 			if (info != null) info.ApplyServerHP((int)BitConverter.ToUInt64(_packet, 28));
 			CombatHitFeedback feedback = player.GetComponent<CombatHitFeedback>();
 			float hitDelay = 0;
-			if (m_objectMap.TryGetValue(Key(1, monsterNum), out GameObject source))
+			if (m_objectManager.TryFind(1, monsterNum, out GameObject source))
 			{
 				MonsterObject monster = source.GetComponent<MonsterObject>();
 				if (monster != null) hitDelay = monster.PlayServerAttack(player.transform);
@@ -478,7 +444,7 @@ public class ZoneSceneNetwork : MonoBehaviour
 		}
 		if (type == ePacketType.S2C_UsePotion && _packet.Length >= 37 && _packet[4] == 0 && m_localPlayer != null)
 		{
-			if (m_objectMap.TryGetValue(Key(0, BitConverter.ToUInt64(_packet, 5)), out GameObject player))
+			if (m_objectManager.TryFind(0, BitConverter.ToUInt64(_packet, 5), out GameObject player))
 			{
 				PlayerInfo info = player.GetComponent<PlayerInfo>();
 				if (info != null) info.ApplyServerHP((int)BitConverter.ToUInt64(_packet, 21));
@@ -499,39 +465,23 @@ public class ZoneSceneNetwork : MonoBehaviour
 				int offset = 48 + (int)i * 12;
 				path.Add(new Vector3(BitConverter.ToSingle(_packet, offset), 0.0f, BitConverter.ToSingle(_packet, offset + 8)));
 			}
-			if (m_objectMap.TryGetValue(Key(1, monsterObjectNum), out GameObject monsterGameObject))
+			if (m_objectManager.TryFind(1, monsterObjectNum, out GameObject monsterGameObject))
 			{
 				MonsterObject monster = monsterGameObject.GetComponent<MonsterObject>();
 				if (monster != null) monster.SetServerPath(position, rotationY, moveSpeed, (int)pathIndex, path);
 			}
 		}
-		if (type == ePacketType.S2C_Chat && _packet.Length >= 7)
-		{
-			int nameSize = _packet[4];
-			int chatSize = _packet[5];
-			if (6 + nameSize + chatSize > _packet.Length) return;
-			string name = Encoding.UTF8.GetString(_packet, 6, nameSize);
-			string chat = Encoding.UTF8.GetString(_packet, 6 + nameSize, chatSize);
-			if (m_chatUI != null) m_chatUI.AddChat(name, chat);
-			ShowWorldChat(name, chat);
-		}
 	}
 
-	void ShowWorldChat(string _name, string _chat)
+	void ShowChatBubble(ChatMessage _message)
 	{
-		foreach (KeyValuePair<string, GameObject> pair in m_objectMap)
-		{
-			PlayerInfo info = pair.Value.GetComponent<PlayerInfo>();
-			if (info == null || info.GetName() != _name) continue;
-			PlayerWorldUI worldUI = pair.Value.GetComponentInChildren<PlayerWorldUI>(true);
-			if (worldUI != null) worldUI.ShowChat(_chat);
-			return;
-		}
+		if (IsTransitioning()) return;
+		m_objectManager.ShowChatBubble(_message);
 	}
 
 	void ApplyPlayerDead(ulong _objectNum, bool _finished = false)
 	{
-		if (!m_objectMap.TryGetValue(Key(0, _objectNum), out GameObject instance)) return;
+		if (!m_objectManager.TryFind(0, _objectNum, out GameObject instance)) return;
 		PlayerObject player = instance.GetComponent<PlayerObject>();
 		if (player == null) return;
 		PlayerInfo info = instance.GetComponent<PlayerInfo>();
@@ -556,30 +506,12 @@ public class ZoneSceneNetwork : MonoBehaviour
 
 	void RemoveObject(byte _type, ulong _num)
 	{
-		string key = Key(_type, _num);
-		if (!m_objectMap.TryGetValue(key, out GameObject instance)) return;
-		if (instance != null && m_localPlayer != null && instance == m_localPlayer.gameObject) return;
-		m_objectMap.Remove(key);
-		if (instance == null) return;
-		if (m_localPlayer != null)
-		{
-			PlayerCombat combat = m_localPlayer.GetComponent<PlayerCombat>();
-			if (combat != null && combat.GetTarget() != null && combat.GetTarget().transform.IsChildOf(instance.transform)) combat.ClearTarget();
-		}
-		// Destroy는 프레임 끝에 처리됨. 그 전에 화면/클릭 판정에서 제외
-		instance.SetActive(false);
-		Destroy(instance);
+		m_objectManager.Remove(_type, _num, m_localPlayer);
 	}
 
 	void ClearWorldObjects()
 	{
-		foreach (KeyValuePair<string, GameObject> pair in m_objectMap)
-		{
-			if (pair.Value == null) continue;
-			pair.Value.SetActive(false);
-			Destroy(pair.Value);
-		}
-		m_objectMap.Clear();
+		m_objectManager.Clear();
 		m_localPlayer = null;
 		m_hasMoveDestination = false;
 		m_lastDestination = Vector3.zero;
@@ -588,11 +520,11 @@ public class ZoneSceneNetwork : MonoBehaviour
 
 	void UpdateTransform(byte _type, ulong _num, byte[] _packet, int _positionOffset, float _rotationY, bool _allowDead = false)
 	{
-		if (!m_objectMap.TryGetValue(Key(_type, _num), out GameObject gameObject)) return;
+		if (!m_objectManager.TryFind(_type, _num, out GameObject gameObject)) return;
 		PlayerObject player = gameObject.GetComponent<PlayerObject>();
 		if (!_allowDead && player != null && player.GetState() == ePlayerObjectState.Dead) return;
 		Vector3 position = new Vector3(BitConverter.ToSingle(_packet, _positionOffset), BitConverter.ToSingle(_packet, _positionOffset + 4), BitConverter.ToSingle(_packet, _positionOffset + 8));
-		gameObject.transform.position = ResolveHeight(position);
+		gameObject.transform.position = ZoneObjectManager.ResolveHeight(position);
 		gameObject.transform.rotation = Quaternion.Euler(0.0f, _rotationY, 0.0f);
 	}
 
@@ -607,7 +539,9 @@ public class ZoneSceneNetwork : MonoBehaviour
 		WriteVector(stream, m_localPlayer.transform.position);
 		WriteVector(stream, destination);
 		stream.Write(m_localPlayer.transform.eulerAngles.y);
-		stream.Write((byte)(destinationChanged ? 1 : 0));
+		byte changed = 0;
+		if (destinationChanged) changed = 1;
+		stream.Write(changed);
 		if (m_client.Write(stream))
 		{
 			m_lastDestination = destination;
@@ -626,17 +560,9 @@ public class ZoneSceneNetwork : MonoBehaviour
 		m_nextMoveSend = Time.time + 0.2f;
 	}
 
-	Vector3 ResolveHeight(Vector3 _position)
-	{
-		Terrain terrain = Terrain.activeTerrain;
-		if (terrain != null) _position.y = terrain.SampleHeight(_position) + terrain.transform.position.y;
-		return _position;
-	}
-
 	void WriteVector(PacketStream _stream, Vector3 _position)
 	{
 		_stream.Write(_position.x); _stream.Write(0.0f); _stream.Write(_position.z);
 	}
 
-	string Key(byte _type, ulong _num) { return _type.ToString() + ":" + _num.ToString(); }
 }

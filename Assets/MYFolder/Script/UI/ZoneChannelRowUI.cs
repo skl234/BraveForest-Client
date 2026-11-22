@@ -1,4 +1,4 @@
-﻿using TMPro;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -15,7 +15,7 @@ public class ZoneChannelRowUI : MonoBehaviour
 		m_channelId = _channelId;
 		m_label.text = "채널 " + _channelId + "    " + _count + " / " + _maxCount;
 		if (_current) m_label.text += "    현재";
-		m_button.interactable = _available && !_current;
+		m_button.interactable = _available && !_current && _count < _maxCount;
 	}
 	public void Select() { if (m_owner != null) m_owner.ChangeChannel(m_channelId); }
 }

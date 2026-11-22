@@ -1,73 +1,91 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.EventSystems;
 
 public class ZoneChatUI : MonoBehaviour
 {
-	const int ChatCapacity = 30;
 	[SerializeField] TMP_Text m_chatText;
-	[SerializeField] TMP_InputField m_inputField;
+	[SerializeField] ChatInputUI m_inputUI;
 	[SerializeField] ScrollRect m_scrollRect;
-	Queue<string> m_chats = new Queue<string>(ChatCapacity);
-	int m_submitFrame = -1;
-	bool m_historyChanged;
+	ChatHistory m_history;
+	ChatInputState m_inputState;
+	readonly List<int> m_textOffsets = new List<int>();
+	uint m_revision;
+	ulong m_firstIndex;
+	bool m_refresh = true;
 
-	void Awake()
+	void OnEnable()
 	{
-		m_inputField.characterLimit = 15;
-		m_inputField.onSubmit.AddListener(OnSubmit);
-	}
-
-	void OnDestroy()
-	{
-		m_inputField.onSubmit.RemoveListener(OnSubmit);
-	}
-
-	void Update()
-	{
-		if (m_inputField.isFocused && Input.GetKeyDown(KeyCode.Escape))
+		NetClient client = FindObjectOfType<NetClient>();
+		if (client != null)
 		{
-			m_inputField.DeactivateInputField();
-			EventSystem.current.SetSelectedGameObject(null);
+			m_history = client.GetChatHistory();
+			m_inputState = client.GetChatInputState();
 		}
-		else if (!m_inputField.isFocused && m_submitFrame != Time.frameCount && Input.GetKeyDown(KeyCode.Return))
+		else
 		{
-			m_inputField.ActivateInputField();
+			if (m_history == null) m_history = new ChatHistory();
+			if (m_inputState == null) m_inputState = new ChatInputState();
 		}
+		m_refresh = true;
+		m_chatText.richText = false;
+		if (m_inputUI != null) m_inputUI.Bind(m_inputState, m_history, SendChat);
 	}
 
-	void OnSubmit(string _value)
+	bool SendChat(eChatChannel _channel, string _targetName, string _text)
 	{
-		m_submitFrame = Time.frameCount;
-		if (string.IsNullOrWhiteSpace(_value)) return;
-		if (ZoneSceneNetwork.Instance == null || !ZoneSceneNetwork.Instance.SendChat(_value)) return;
-		m_inputField.text = "";
-		m_inputField.DeactivateInputField();
-		EventSystem.current.SetSelectedGameObject(null);
+		if (ZoneSceneNetwork.Instance == null) return false;
+		return ZoneSceneNetwork.Instance.SendChat(_channel, _targetName, _text);
+	}
+
+	public void ChangeChannel()
+	{
+		if (m_inputUI != null) m_inputUI.ChangeChannel();
 	}
 
 	public void AddChat(string _name, string _chat)
 	{
-		string line = "[" + DateTime.Now.ToString("HH:mm") + "][" + _name + "] : " + _chat;
-		// 30개가 차면 가장 오래된 채팅부터 제거
-		if (m_chats.Count >= ChatCapacity) m_chats.Dequeue();
-		m_chats.Enqueue(line);
-		m_historyChanged = true;
+		m_history.AddChat(eChatChannel.Region, _name, _chat);
 	}
 
 	void LateUpdate()
 	{
-		if (!m_historyChanged) return;
-		m_historyChanged = false;
+		if (m_history == null || (!m_refresh && m_revision == m_history.GetRevision())) return;
+		m_refresh = false;
+		m_revision = m_history.GetRevision();
 		bool followLatest = m_chatText.text.Length == 0 || m_scrollRect.content.rect.height <= m_scrollRect.viewport.rect.height || m_scrollRect.verticalNormalizedPosition <= 0.01f;
-		float position = m_scrollRect.verticalNormalizedPosition;
+		float position = m_scrollRect.content.anchoredPosition.y;
+		ulong firstIndex = m_history.GetFirstIndex();
+		if (firstIndex > m_firstIndex)
+		{
+			ulong removed = firstIndex - m_firstIndex;
+			if (removed < (ulong)m_textOffsets.Count)
+			{
+				int offset = m_textOffsets[(int)removed];
+				TMP_TextInfo info = m_chatText.textInfo;
+				for (int i = 0; i < info.characterCount && info.lineCount > 0; ++i)
+				{
+					if (info.characterInfo[i].index < offset) continue;
+					int line = info.characterInfo[i].lineNumber;
+					position -= info.lineInfo[0].ascender - info.lineInfo[line].ascender;
+					break;
+				}
+			}
+			else position = 0;
+		}
+		m_firstIndex = firstIndex;
 		// 몰려온 채팅은 프레임당 한 번만 반영. 이전 채팅을 읽는 중이면 위치 유지
-		m_chatText.text = string.Join("\n", m_chats);
+		m_chatText.text = m_history.GetText(m_textOffsets);
 		Canvas.ForceUpdateCanvases();
 		if (followLatest) m_scrollRect.verticalNormalizedPosition = 0.0f;
-		else m_scrollRect.verticalNormalizedPosition = position;
+		else
+		{
+			m_scrollRect.StopMovement();
+			Vector2 offset = m_scrollRect.content.anchoredPosition;
+			offset.y = Mathf.Clamp(position, 0, Mathf.Max(0, m_scrollRect.content.rect.height - m_scrollRect.viewport.rect.height));
+			m_scrollRect.content.anchoredPosition = offset;
+		}
 	}
 }

@@ -1,33 +1,32 @@
-﻿using TMPro;
+using TMPro;
 using UnityEngine;
 
 public class ZoneGameplayUI : MonoBehaviour
 {
 	[SerializeField] CombatHUD m_hud;
-	[SerializeField] GameObject m_loading;
-	[SerializeField] TMP_Text m_loadingText;
 	[SerializeField] NoticePanelUI m_noticePanel;
+	[SerializeField] ZoneMenuUI m_menu;
 	PlayerCombat m_combat;
-	float m_started;
 	bool m_quitOnConfirm;
 
 	public void Bind(LocalPlayerObject _player)
 	{
 		m_combat = _player.GetComponent<PlayerCombat>();
 		m_hud.Bind(_player);
+		if (m_menu != null) m_menu.Bind(_player);
 		SetLoading(false);
 	}
 	public void SetLoading(bool _loading)
 	{
 		if (_loading) CollapseMap();
-		m_loading.SetActive(_loading);
+		if (_loading) LoadingPanelUI.Show();
+		else LoadingPanelUI.Hide();
 		m_noticePanel.Hide();
-		m_started = Time.unscaledTime;
 	}
 	public void ShowMessage(string _message, bool _quitOnConfirm = false)
 	{
 		CollapseMap();
-		m_loading.SetActive(false);
+		LoadingPanelUI.Hide();
 		m_quitOnConfirm = _quitOnConfirm;
 		m_noticePanel.Show(_message, "확인", ConfirmMessage);
 	}
@@ -46,7 +45,7 @@ public class ZoneGameplayUI : MonoBehaviour
 	public void ShowRespawn(string _message = "마을에서 부활합니다.")
 	{
 		CollapseMap();
-		m_loading.SetActive(false);
+		LoadingPanelUI.Hide();
 		m_noticePanel.Show(_message, "확인", ConfirmRespawn);
 	}
 	void ConfirmRespawn()
@@ -58,12 +57,6 @@ public class ZoneGameplayUI : MonoBehaviour
 	{
 		ZoneMapUI map = FindObjectOfType<ZoneMapUI>();
 		if (map != null) map.Collapse();
-	}
-	void Update()
-	{
-		if (!m_loading.activeSelf) return;
-		int dots = (int)((Time.unscaledTime - m_started) * 2.0f) % 4;
-		m_loadingText.text = "BRAVE FOREST\n\nLOADING" + new string('.', dots);
 	}
 	public void BasicAttack() { if (m_combat != null) m_combat.CommandTarget(m_combat.GetTarget(), true); }
 	public void SkillA() { if (m_combat != null) m_combat.TryHeavy(); }

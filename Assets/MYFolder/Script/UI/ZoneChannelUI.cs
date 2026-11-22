@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -11,9 +11,12 @@ public class ZoneChannelUI : MonoBehaviour
 	[SerializeField] ZoneChannelRowUI[] m_rows;
 	[SerializeField] ScrollRect m_scrollRect;
 
-	public void SetChannel(ulong _channelId) { m_currentChannel.text = "채널 " + _channelId + "  변경"; }
+	public void SetChannel(ulong _channelId) { m_currentChannel.text = "채널" + _channelId; }
 	public void Open()
 	{
+		if (UIInputBlocker.IsBlocked()) return;
+		ZoneMapUI map = FindObjectOfType<ZoneMapUI>();
+		if (map != null) map.Collapse();
 		m_panel.SetActive(true);
 		m_message.text = "채널 정보를 불러오는 중...";
 		for (int i = 0; i < m_rows.Length; ++i) m_rows[i].gameObject.SetActive(false);
@@ -31,20 +34,16 @@ public class ZoneChannelUI : MonoBehaviour
 		if (_success) Close();
 		else m_message.text = "채널을 이동할 수 없는 상태입니다.";
 	}
-	public void ReadList(byte[] _packet, ulong _currentChannel)
+	public void SetList(ChannelInfo[] _list, ulong _currentChannel)
 	{
-		if (_packet.Length < 12) return;
-		ulong count = BitConverter.ToUInt64(_packet, 4);
-		if (count > (ulong)((_packet.Length - 12) / 25)) return;
+		if (_list == null) return;
 		m_message.text = "조회 시점의 인원입니다. 이동할 채널을 선택하세요.";
 		for (int i = 0; i < m_rows.Length; ++i)
 		{
-			m_rows[i].gameObject.SetActive((ulong)i < count);
-			if ((ulong)i >= count) continue;
-			int offset = 12 + i * 25;
-			ulong channelId = BitConverter.ToUInt64(_packet, offset);
-			m_rows[i].Bind(this, channelId, BitConverter.ToUInt64(_packet, offset + 8),
-				BitConverter.ToUInt64(_packet, offset + 16), _packet[offset + 24] != 0, channelId == _currentChannel);
+			m_rows[i].gameObject.SetActive(i < _list.Length);
+			if (i >= _list.Length) continue;
+			ChannelInfo info = _list[i];
+			m_rows[i].Bind(this, info.channelId, info.playerCount, info.maxPlayerCount, info.available, info.channelId == _currentChannel);
 		}
 		if (m_scrollRect != null)
 		{

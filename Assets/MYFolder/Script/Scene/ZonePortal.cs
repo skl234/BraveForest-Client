@@ -7,14 +7,23 @@ public class ZonePortal : MonoBehaviour
 	[SerializeField, Min(0.1f)] float m_enterDistance = 2.4f;
 	[Header("Server Portal Data")]
 	[SerializeField] ulong m_targetZoneId;
-	[SerializeField] Vector3 m_targetEnterPosition;
+	[SerializeField] ulong m_targetPortalId = 1;
+	[SerializeField] Transform m_arrivalPoint;
 	bool m_positionChecked;
 	bool m_inside;
 
 	public ulong GetPortalId() { return m_portalId; }
 	public bool IsActive() { return m_active; }
 	public ulong GetTargetZoneId() { return m_targetZoneId; }
-	public Vector3 GetTargetEnterPosition() { return m_targetEnterPosition; }
+	public ulong GetTargetPortalId() { return m_targetPortalId; }
+	public Transform GetArrivalPoint() { return m_arrivalPoint; }
+	public Vector3 GetArrivalPosition()
+	{
+		if (m_arrivalPoint == null) throw new System.InvalidOperationException(name + " 도착 위치가 연결되지 않았습니다.");
+		Vector3 position = m_arrivalPoint.position;
+		position.y = 0.0f;
+		return position;
+	}
 	public float GetEnterDistance() { return m_enterDistance; }
 
 	void OnEnable()
@@ -56,6 +65,12 @@ public class ZonePortal : MonoBehaviour
 
 	void OnDrawGizmosSelected()
 	{
+		if (m_arrivalPoint != null)
+		{
+			Gizmos.color = Color.green;
+			Gizmos.DrawWireSphere(m_arrivalPoint.position, 0.75f);
+			Gizmos.DrawLine(transform.position, m_arrivalPoint.position);
+		}
 		Gizmos.color = new Color(0.2f, 0.8f, 1.0f, 1.0f);
 		Vector3 center = transform.position + Vector3.up * .05f;
 		Vector3 previous = center + Vector3.right * m_enterDistance;

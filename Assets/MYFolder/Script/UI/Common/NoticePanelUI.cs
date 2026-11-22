@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 // 로그인/존 어디서든 같은 안내창을 사용함
@@ -32,9 +33,16 @@ public class NoticePanelUI : MonoBehaviour
 
 	public void Hide()
 	{
+		if (EventSystem.current != null)
+		{
+			GameObject selected = EventSystem.current.currentSelectedGameObject;
+			if (selected != null && selected.transform.IsChildOf(transform)) EventSystem.current.SetSelectedGameObject(null);
+		}
 		gameObject.SetActive(false);
 		m_action = null;
 	}
+
+	void OnDisable() { m_action = null; }
 
 	void OnButtonClick()
 	{

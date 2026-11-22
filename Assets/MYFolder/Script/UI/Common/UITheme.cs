@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 
 [CreateAssetMenu(menuName = "MYFolder/UI/공통 테마")]

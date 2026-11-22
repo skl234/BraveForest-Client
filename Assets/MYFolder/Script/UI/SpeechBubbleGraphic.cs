@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 
 // 해상도에 따라 늘어나도 모서리와 꼬리 모양은 유지

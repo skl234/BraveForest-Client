@@ -1,4 +1,4 @@
-﻿using UnityEngine.EventSystems;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 // 목록은 스크롤바로만 조작. 내용 영역의 휠/드래그는 다른 UI로 넘기지 않음

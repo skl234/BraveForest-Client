@@ -4,10 +4,10 @@ using UnityEngine;
 
 public class CreateAccountButton : MonoBehaviour
 {
-    [SerializeReference]
-    GameObject m_accountCreatePanel;
-    public void OnClick()
-    {
-        m_accountCreatePanel.SetActive(true);
-    }
+	[SerializeReference]
+	GameObject m_accountCreatePanel;
+	public void OnClick()
+	{
+		m_accountCreatePanel.SetActive(true);
+	}
 }

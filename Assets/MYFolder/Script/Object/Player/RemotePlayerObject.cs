@@ -1,20 +1,21 @@
-﻿using UnityEngine;
+using UnityEngine;
 using System.Collections;
 
 [RequireComponent(typeof(PlayerAttackEffects))]
 public class RemotePlayerObject : PlayerObject
 {
-    [SerializeField] float m_moveSpeed = 5.0f;
-    Vector3 m_destination;
-    bool m_moving;
-    string m_attackClip;
-    Transform m_attackTarget;
-    float m_attackUntil;
+	[SerializeField] float m_moveSpeed = 5.0f;
+	Vector3 m_destination;
+	bool m_moving;
+	string m_attackClip;
+	Transform m_attackTarget;
+	float m_attackUntil;
 	byte m_attackType;
 	int m_attackLevel;
 	float m_attackStarted;
 	float m_attackDuration;
 	float m_impactRatio;
+	float m_secondImpactRatio;
 	Coroutine m_pendingArea;
 	PlayerAttackEffects m_effects;
 	[SerializeField] float m_areaRadius = 5.0f;
@@ -45,6 +46,7 @@ public class RemotePlayerObject : PlayerObject
 		string clip = "NormalAttack01_SwordShield";
 		if (m_playerClass == ePlayerClass.Archer) clip = "Attack01_Bow";
 		m_impactRatio = .38f;
+		m_secondImpactRatio = .68f;
 		ePlayerObjectState state = ePlayerObjectState.Attack;
 		if (_attackType == 2)
 		{
@@ -59,6 +61,15 @@ public class RemotePlayerObject : PlayerObject
 		{
 			AnimationClip[] clips = m_animator.runtimeAnimatorController.animationClips;
 			for (int i = 0; i < clips.Length; ++i) if (clips[i].name == clip) { m_attackDuration = clips[i].length; break; }
+		}
+		PlayerAnimationData.Attack animation = GetAttackAnimation(_attackType);
+		if (animation != null)
+		{
+			clip = animation.state;
+			m_attackDuration = animation.duration;
+			m_impactRatio = animation.impact;
+			m_secondImpactRatio = animation.secondImpact;
+			if (animation.repeat) m_impactRatio = 0;
 		}
 		PlayServerAttack(state, clip);
 		SetAttackTarget(_target, _attackType);
@@ -105,7 +116,7 @@ public class RemotePlayerObject : PlayerObject
 		{
 			CombatDamageCalculator.SplitWarriorSkillA(damage, out int first, out int second);
 			feedback.PlayDelayed(first, delay);
-			feedback.PlayDelayed(second, Mathf.Max(0, m_attackStarted + m_attackDuration * .68f - Time.time));
+			feedback.PlayDelayed(second, Mathf.Max(0, m_attackStarted + m_attackDuration * m_secondImpactRatio - Time.time));
 		}
 		else feedback.PlayDelayed(damage, delay);
 	}
@@ -121,72 +132,76 @@ public class RemotePlayerObject : PlayerObject
 		_feedback.Play(_damage);
 	}
 
-    public void SetAttackTarget(GameObject _target, byte _attackType)
-    {
-        m_attackTarget = null;
-        if (_target != null) m_attackTarget = _target.transform;
-        m_attackUntil = 0;
-        if (_attackType == 4) m_attackUntil = Time.time + 3;
-    }
+	public void SetAttackTarget(GameObject _target, byte _attackType)
+	{
+		m_attackTarget = null;
+		if (_target != null) m_attackTarget = _target.transform;
+		m_attackUntil = 0;
+		if (_attackType == 4) m_attackUntil = Time.time + 3;
+	}
 
-    public void PlayServerAttack(ePlayerObjectState _state, string _clip)
-    {
+	public void PlayServerAttack(ePlayerObjectState _state, string _clip)
+	{
 		if (m_state == ePlayerObjectState.Dead) return;
-        m_moving = false;
-        m_attackClip = _clip;
-        PlayAttack(_state, _clip);
-    }
+		m_moving = false;
+		m_attackClip = _clip;
+		PlayAttack(_state, _clip);
+	}
 
-    public void ApplyMove(Vector3 _position, Vector3 _destination, float _rotationY)
-    {
+	public void ApplyMove(Vector3 _position, Vector3 _destination, float _rotationY)
+	{
 		if (m_state == ePlayerObjectState.Dead) return;
-        // 0.2초 위치 보고마다 되감지 않고 현재 위치에서 같은 속도로 목적지까지 이동
-        Vector3 reportedMove = _destination - _position; reportedMove.y = 0;
-        if (reportedMove.sqrMagnitude < 0.0001f && (m_state == ePlayerObjectState.Attack || m_state == ePlayerObjectState.Skill)) return;
-        m_destination = _destination;
-        m_destination.y = _position.y;
-        Vector3 remaining = m_destination - transform.position; remaining.y = 0;
-        m_moving = remaining.sqrMagnitude > 0.0001f;
-        if (!m_moving && m_state != ePlayerObjectState.Attack && m_state != ePlayerObjectState.Skill)
-            transform.rotation = Quaternion.Euler(0, _rotationY, 0);
-        if (m_moving) { CancelArea(); SetState(ePlayerObjectState.Move); }
-        else if (m_state == ePlayerObjectState.Move) SetState(ePlayerObjectState.Idle);
-    }
+		// 0.2초 위치 보고마다 되감지 않고 현재 위치에서 같은 속도로 목적지까지 이동
+		Vector3 reportedMove = _destination - _position; reportedMove.y = 0;
+		if (reportedMove.sqrMagnitude < 0.0001f && (m_state == ePlayerObjectState.Attack || m_state == ePlayerObjectState.Skill)) return;
+		m_destination = _destination;
+		m_destination.y = _position.y;
+		Vector3 remaining = m_destination - transform.position; remaining.y = 0;
+		m_moving = remaining.sqrMagnitude > 0.0001f;
+		if (!m_moving && m_state != ePlayerObjectState.Attack && m_state != ePlayerObjectState.Skill)
+			transform.rotation = Quaternion.Euler(0, _rotationY, 0);
+		if (m_moving) { CancelArea(); SetState(ePlayerObjectState.Move); }
+		else if (m_state == ePlayerObjectState.Move) SetState(ePlayerObjectState.Idle);
+	}
 
-    void Update()
-    {
+	void Update()
+	{
 		if (m_state == ePlayerObjectState.Dead) { CancelArea(); MaintainStateAnimation(); return; }
 		if (m_attackType == 4 && Time.time >= m_attackUntil && m_state == ePlayerObjectState.Skill) SetState(ePlayerObjectState.Idle);
-        if (m_moving && m_state == ePlayerObjectState.Move)
-        {
-            Vector3 direction = m_destination - transform.position; direction.y = 0;
-            if (direction.sqrMagnitude > 0.0001f) transform.rotation = Quaternion.LookRotation(direction);
-            Vector3 position = Vector3.MoveTowards(transform.position, m_destination, m_moveSpeed * Time.deltaTime);
-            Terrain terrain = Terrain.activeTerrain;
-            if (terrain != null) position.y = terrain.SampleHeight(position) + terrain.transform.position.y;
-            transform.position = position;
-            Vector3 remaining = m_destination - position;
-            remaining.y = 0.0f;
-            if (remaining.sqrMagnitude < 0.0001f)
-            {
-                m_moving = false;
-                SetState(ePlayerObjectState.Idle);
-            }
-        }
-        if ((m_state == ePlayerObjectState.Attack || m_state == ePlayerObjectState.Skill) && m_animator != null)
-        {
-            if (m_attackTarget != null)
-            {
-                Vector3 direction = m_attackTarget.position - transform.position; direction.y = 0;
-                if (direction.sqrMagnitude > 0.0001f) transform.rotation = Quaternion.LookRotation(direction);
-            }
-            AnimatorStateInfo state = m_animator.GetCurrentAnimatorStateInfo(0);
-            if (state.IsName(m_attackClip) && state.normalizedTime >= 1.0f)
-            {
-                if (Time.time < m_attackUntil) m_animator.Play(m_attackClip, 0, 0);
-                else SetState(ePlayerObjectState.Idle);
-            }
-        }
-        MaintainStateAnimation();
-    }
+		if (m_moving && m_state == ePlayerObjectState.Move)
+		{
+			Vector3 direction = m_destination - transform.position; direction.y = 0;
+			if (direction.sqrMagnitude > 0.0001f) transform.rotation = Quaternion.LookRotation(direction);
+			Vector3 position = Vector3.MoveTowards(transform.position, m_destination, m_moveSpeed * Time.deltaTime);
+			Terrain terrain = Terrain.activeTerrain;
+			if (terrain != null) position.y = terrain.SampleHeight(position) + terrain.transform.position.y;
+			transform.position = position;
+			Vector3 remaining = m_destination - position;
+			remaining.y = 0.0f;
+			if (remaining.sqrMagnitude < 0.0001f)
+			{
+				m_moving = false;
+				SetState(ePlayerObjectState.Idle);
+			}
+		}
+		if ((m_state == ePlayerObjectState.Attack || m_state == ePlayerObjectState.Skill) && m_animator != null)
+		{
+			if (m_attackTarget != null)
+			{
+				Vector3 direction = m_attackTarget.position - transform.position; direction.y = 0;
+				if (direction.sqrMagnitude > 0.0001f) transform.rotation = Quaternion.LookRotation(direction);
+			}
+			AnimatorStateInfo state = m_animator.GetCurrentAnimatorStateInfo(0);
+			if (state.IsName(m_attackClip) && state.normalizedTime >= 1.0f)
+			{
+				if (Time.time < m_attackUntil)
+				{
+					PlayerAnimationData.Attack animation = GetAttackAnimation(m_attackType);
+					if (animation == null || !animation.repeat) PlayAttack(m_state, m_attackClip);
+				}
+				else SetState(ePlayerObjectState.Idle);
+			}
+		}
+		MaintainStateAnimation();
+	}
 }
